@@ -5,7 +5,7 @@ export default defineConfig({
     server: {
         host: '0.0.0.0', 
     allowedHosts: [
-      "trends-refresh-government-participants.trycloudflare.com",
+      "open-chat-o4vi.onrender.com",
     ],
     }
 });
