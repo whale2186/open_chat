@@ -12,8 +12,8 @@ import type {
   RoomUser
 } from '../types';
 import { createId, createUserId } from '../utils/ids';
-import { getOldestChatTimestamp, mapPersistedMessage, mergeMessages } from '../utils/messages';
-import { getSessionValue, removeSessionValue, setSessionValue } from '../utils/storage';
+import { getNewestChatCursor, getOldestChatTimestamp, mapPersistedMessage, mergeMessages } from '../utils/messages';
+import { getSessionValue, getStoredValue, removeSessionValue, setSessionValue, setStoredValue } from '../utils/storage';
 import { createRoom, getRoomDetails } from '../services/registryApi';
 import { getRoomMessages } from '../services/relayApi';
 import { RelaySocket } from '../services/relaySocket';
@@ -22,6 +22,8 @@ import { useSettings } from './SettingsContext';
 
 const ACTIVE_SESSION_KEY = 'cyan-chat-active-session-v1';
 const SESSION_MESSAGES_PREFIX = 'cyan-chat-session-messages-v1';
+const SESSION_HISTORY_CURSOR_PREFIX = 'cyan-chat-history-cursor-v1';
+const ROOM_IDENTITY_PREFIX = 'cyan-chat-room-identity-v1';
 const HISTORY_PAGE_SIZE = 50;
 const MAX_SESSION_MESSAGES = 300;
 
@@ -58,6 +60,21 @@ type CheckRelayResult = {
   relay: RelayInfo;
 };
 
+type RoomIdentity = {
+  userId: string;
+  nickname: string;
+  createdAt: number;
+  updatedAt: number;
+};
+
+type MessageIdentityInfo = Pick<EnterRoomResult, 'roomId' | 'userId' | 'nickname'>;
+
+type MessageHistoryCursor = {
+  timestamp: number;
+  messageId: string;
+  updatedAt: number;
+};
+
 const SessionContext = createContext<SessionContextValue | null>(null);
 
 function persistActiveSession(info: EnterRoomResult | null) {
@@ -76,10 +93,78 @@ function roomMessagesKey(roomId: string) {
   return `${SESSION_MESSAGES_PREFIX}:${encodeURIComponent(roomId)}`;
 }
 
-function getStoredSessionMessages(info: Pick<EnterRoomResult, 'roomId' | 'userId'>) {
+function sessionHistoryCursorKey(info: Pick<EnterRoomResult, 'roomId' | 'userId'>) {
+  return `${SESSION_HISTORY_CURSOR_PREFIX}:${encodeURIComponent(info.roomId)}:${encodeURIComponent(info.userId)}`;
+}
+
+function roomHistoryCursorKey(roomId: string) {
+  return `${SESSION_HISTORY_CURSOR_PREFIX}:${encodeURIComponent(roomId)}`;
+}
+
+function roomIdentityKey(roomId: string) {
+  return `${ROOM_IDENTITY_PREFIX}:${encodeURIComponent(roomId)}`;
+}
+
+function persistRoomIdentity(roomId: string, userId: string, nickname: string) {
+  const key = roomIdentityKey(roomId);
+  const now = Date.now();
+  const existing = getStoredValue<RoomIdentity | null>(key, null);
+  setStoredValue<RoomIdentity>(key, {
+    userId,
+    nickname,
+    createdAt: existing?.createdAt || now,
+    updatedAt: now
+  });
+}
+
+function getOrCreateRoomUserId(roomId: string, nickname: string) {
+  const existing = getStoredValue<RoomIdentity | null>(roomIdentityKey(roomId), null);
+  if (existing?.userId) {
+    persistRoomIdentity(roomId, existing.userId, nickname);
+    return existing.userId;
+  }
+  const userId = createUserId(nickname);
+  persistRoomIdentity(roomId, userId, nickname);
+  return userId;
+}
+
+function restoreCachedOwnership(messages: ChatMessage[], info: MessageIdentityInfo) {
+  return messages.map((message) =>
+    message.direction === 'outgoing' && message.senderId !== info.userId
+      ? {
+          ...message,
+          senderId: info.userId,
+          senderNickname: info.nickname,
+          colorKey: info.userId
+        }
+      : message
+  );
+}
+
+function getStoredSessionMessages(info: MessageIdentityInfo) {
   const userMessages = getSessionValue<ChatMessage[]>(sessionMessagesKey(info), []);
-  if (userMessages.length) return userMessages;
-  return getSessionValue<ChatMessage[]>(roomMessagesKey(info.roomId), []);
+  if (userMessages.length) return restoreCachedOwnership(userMessages, info);
+  const roomMessages = getSessionValue<ChatMessage[]>(roomMessagesKey(info.roomId), []);
+  return restoreCachedOwnership(roomMessages, info);
+}
+
+function cursorFromMessages(messages: ChatMessage[]): MessageHistoryCursor | null {
+  const cursor = getNewestChatCursor(messages);
+  return cursor ? { ...cursor, updatedAt: Date.now() } : null;
+}
+
+function persistHistoryCursor(info: Pick<EnterRoomResult, 'roomId' | 'userId'>, messages: ChatMessage[]) {
+  const cursor = cursorFromMessages(messages);
+  if (!cursor) return;
+  setSessionValue(sessionHistoryCursorKey(info), cursor);
+  setSessionValue(roomHistoryCursorKey(info.roomId), cursor);
+}
+
+function getStoredHistoryCursor(info: Pick<EnterRoomResult, 'roomId' | 'userId'>): MessageHistoryCursor | null {
+  return (
+    getSessionValue<MessageHistoryCursor | null>(sessionHistoryCursorKey(info), null) ||
+    getSessionValue<MessageHistoryCursor | null>(roomHistoryCursorKey(info.roomId), null)
+  );
 }
 
 function persistSessionMessages(info: Pick<EnterRoomResult, 'roomId' | 'userId'>, nextMessages: ChatMessage[]) {
@@ -88,11 +173,14 @@ function persistSessionMessages(info: Pick<EnterRoomResult, 'roomId' | 'userId'>
     .slice(-MAX_SESSION_MESSAGES);
   setSessionValue(sessionMessagesKey(info), chatMessages);
   setSessionValue(roomMessagesKey(info.roomId), chatMessages);
+  persistHistoryCursor(info, chatMessages);
 }
 
 function removePersistedSessionMessages(info: Pick<EnterRoomResult, 'roomId' | 'userId'>) {
   removeSessionValue(sessionMessagesKey(info));
   removeSessionValue(roomMessagesKey(info.roomId));
+  removeSessionValue(sessionHistoryCursorKey(info));
+  removeSessionValue(roomHistoryCursorKey(info.roomId));
 }
 
 function relayStatusToMessageStatus(status?: string): MessageStatus | null {
@@ -130,6 +218,9 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const peerRef = useRef<PeerConnectionManager | null>(null);
   const sessionInfoRef = useRef<EnterRoomResult | null>(null);
   const membersRef = useRef<RoomUser[]>([]);
+  const messagesRef = useRef<ChatMessage[]>([]);
+  const initialHistoryCursorRef = useRef<{ timestamp: number; messageId: string } | null>(null);
+  const syncedAfterCursorsRef = useRef(new Set<string>());
   const reconnectAttempts = useRef(0);
   const leaveRequested = useRef(false);
   const historyLoadingRef = useRef(false);
@@ -155,6 +246,10 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     membersRef.current = members;
   }, [members]);
+
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
 
   const updateMembers = useCallback(
     (updater: RoomUser[] | ((current: RoomUser[]) => RoomUser[])) => {
@@ -204,11 +299,16 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
   const appendMessages = useCallback((incoming: ChatMessage[]) => {
     if (!incoming.length) return;
-    setMessages((prev) => mergeMessages(prev, incoming));
+    setMessages((prev) => {
+      const merged = mergeMessages(prev, incoming);
+      messagesRef.current = merged;
+      return merged;
+    });
   }, []);
 
   const replaceMessagesWithoutPersisting = useCallback((nextMessages: ChatMessage[]) => {
     persistMessagesPausedRef.current = true;
+    messagesRef.current = nextMessages;
     setMessages(nextMessages);
     window.setTimeout(() => {
       persistMessagesPausedRef.current = false;
@@ -216,28 +316,53 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const fetchMessageHistory = useCallback(
-    async (options: { before?: number; limit?: number; replace?: boolean } = {}) => {
+    async (options: { before?: number; after?: number; afterId?: string; limit?: number; replace?: boolean } = {}) => {
       const info = sessionInfoRef.current;
       if (!info || historyLoadingRef.current) return;
+
+      const afterCursorKey =
+        options.after != null && options.before == null
+          ? `${info.roomId}:${options.after}:${options.afterId || ''}`
+          : '';
+      if (afterCursorKey && syncedAfterCursorsRef.current.has(afterCursorKey)) {
+        return;
+      }
+      if (afterCursorKey) {
+        syncedAfterCursorsRef.current.add(afterCursorKey);
+      }
 
       historyLoadingRef.current = true;
       setHistoryLoading(true);
       try {
         const response = await getRoomMessages(info.relay.publicUrl, info.roomId, {
           before: options.before,
+          after: options.after,
+          afterId: options.afterId,
           limit: options.limit ?? HISTORY_PAGE_SIZE
         });
         const mapped = response.messages.map((msg) => mapPersistedMessage(msg, info.roomId, info.userId));
+        if (mapped.length) {
+          persistHistoryCursor(info, mergeMessages(messagesRef.current, mapped));
+        }
         if (options.replace) {
           setMessages((prev) => {
             const systemMessages = prev.filter((m) => m.direction === 'system');
-            return mergeMessages(systemMessages, mapped);
+            const merged = mergeMessages(systemMessages, mapped);
+            messagesRef.current = merged;
+            return merged;
           });
         } else {
           appendMessages(mapped);
         }
-        setHasMoreHistory(response.hasMore);
+        if (options.after != null && options.before == null) {
+          setHasMoreHistory((prev) => prev || messagesRef.current.some((m) => m.direction !== 'system'));
+        } else {
+          setHasMoreHistory(response.hasMore);
+        }
       } catch (error) {
+        if (afterCursorKey) {
+          syncedAfterCursorsRef.current.delete(afterCursorKey);
+        }
         console.warn('Unable to load relay message history:', error);
         if (options.before == null) {
           setHasMoreHistory(false);
@@ -251,10 +376,22 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   );
 
   const loadInitialHistory = useCallback(async () => {
-    await fetchMessageHistory({ limit: HISTORY_PAGE_SIZE });
+    if (!persistentChatEnabledRef.current) {
+      initialHistoryCursorRef.current = null;
+      setHasMoreHistory(false);
+      return;
+    }
+    const cursor = initialHistoryCursorRef.current || getNewestChatCursor(messagesRef.current);
+    initialHistoryCursorRef.current = null;
+    await fetchMessageHistory({
+      after: cursor?.timestamp,
+      afterId: cursor?.messageId,
+      limit: HISTORY_PAGE_SIZE
+    });
   }, [fetchMessageHistory]);
 
   const loadOlderMessages = useCallback(async () => {
+    if (!persistentChatEnabledRef.current) return;
     const oldest = getOldestChatTimestamp(messages);
     if (!hasMoreHistory || historyLoadingRef.current || oldest == null) return;
     await fetchMessageHistory({ before: oldest, limit: HISTORY_PAGE_SIZE });
@@ -436,6 +573,9 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
       reconnectAttempts.current = 0;
       const storedMessages = persistentChatEnabledRef.current ? getStoredSessionMessages(roomInfo) : [];
+      const localCursor = getNewestChatCursor(storedMessages.length ? storedMessages : messagesRef.current);
+      const storedCursor = persistentChatEnabledRef.current ? getStoredHistoryCursor(roomInfo) : null;
+      initialHistoryCursorRef.current = localCursor || storedCursor;
 
       sessionInfoRef.current = roomInfo;
       persistActiveSession(roomInfo);
@@ -745,7 +885,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       const result: EnterRoomResult = {
         roomId: created.roomId,
         relay,
-        userId: createUserId(nickname),
+        userId: getOrCreateRoomUserId(created.roomId, nickname),
         nickname,
         hasPin: !!request.pin?.trim(),
         pin: request.pin?.trim() || undefined,
@@ -754,6 +894,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         mode: 'create'
       };
 
+      persistRoomIdentity(result.roomId, result.userId, result.nickname);
       sessionInfoRef.current = result;
       replaceMessagesWithoutPersisting([]);
       setHasMoreHistory(false);
@@ -782,7 +923,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       const result: EnterRoomResult = {
         roomId,
         relay,
-        userId: createUserId(nickname),
+        userId: getOrCreateRoomUserId(roomId, nickname),
         nickname,
         hasPin: !!details.room.hasPin,
         pin: request.pin?.trim() || undefined,
@@ -822,6 +963,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         if (typeof checked?.offlineMessagesEnabled === 'boolean') {
           roomInfo.offlineMessagesEnabled = checked.offlineMessagesEnabled;
         }
+        persistRoomIdentity(roomInfo.roomId, roomInfo.userId, roomInfo.nickname);
 
         sessionInfoRef.current = roomInfo;
         replaceMessagesWithoutPersisting([]);

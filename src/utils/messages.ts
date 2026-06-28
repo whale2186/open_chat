@@ -35,7 +35,14 @@ export function mergeMessages(...groups: ChatMessage[][]): ChatMessage[] {
         continue;
       }
       if (existing.direction === 'outgoing' && existing.status !== 'received') {
-        map.set(msg.id, { ...msg, direction: existing.direction, status: existing.status });
+        map.set(msg.id, {
+          ...msg,
+          senderId: existing.senderId,
+          senderNickname: existing.senderNickname,
+          colorKey: existing.colorKey,
+          direction: existing.direction,
+          status: existing.status
+        });
       }
     }
   }
@@ -46,4 +53,17 @@ export function getOldestChatTimestamp(messages: ChatMessage[]): number | null {
   const chatMessages = messages.filter((m) => m.direction !== 'system');
   if (!chatMessages.length) return null;
   return Math.min(...chatMessages.map((m) => m.timestamp));
+}
+
+export function getNewestChatCursor(messages: ChatMessage[]): { timestamp: number; messageId: string } | null {
+  const chatMessages = messages.filter((m) => m.direction !== 'system');
+  if (!chatMessages.length) return null;
+  return chatMessages.reduce<{ timestamp: number; messageId: string } | null>((latest, message) => {
+    if (!latest) return { timestamp: message.timestamp, messageId: message.id };
+    if (message.timestamp > latest.timestamp) return { timestamp: message.timestamp, messageId: message.id };
+    if (message.timestamp === latest.timestamp && message.id > latest.messageId) {
+      return { timestamp: message.timestamp, messageId: message.id };
+    }
+    return latest;
+  }, null);
 }

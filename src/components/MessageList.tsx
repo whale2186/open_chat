@@ -282,7 +282,7 @@ export default function MessageList({
             key={message.id}
             message={message}
             isOwn={
-              message.senderId === currentUserId
+              message.direction === 'outgoing' || message.senderId === currentUserId
             }
           />
         ))}

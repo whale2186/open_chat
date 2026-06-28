@@ -18,6 +18,8 @@ async function requestJSON<T>(url: string, init?: RequestInit): Promise<T> {
 
 export interface GetMessagesOptions {
   before?: number;
+  after?: number;
+  afterId?: string;
   limit?: number;
 }
 
@@ -29,6 +31,8 @@ export async function getRoomMessages(
   const base = normalizeHttpUrl(relayPublicUrl);
   const params = new URLSearchParams();
   if (options.before != null) params.set('before', String(options.before));
+  if (options.after != null) params.set('after', String(options.after));
+  if (options.afterId) params.set('afterId', options.afterId);
   if (options.limit != null) params.set('limit', String(options.limit));
   const qs = params.toString();
   const url = `${base}/api/rooms/${encodeURIComponent(roomId)}/messages${qs ? `?${qs}` : ''}`;
