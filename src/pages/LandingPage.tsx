@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Alert,
@@ -7,11 +7,13 @@ import {
   Card,
   CardContent,
   Chip,
+  FormControlLabel,
   IconButton,
   List,
   ListItemButton,
   ListItemText,
   Stack,
+  Switch,
   TextField,
   Tooltip,
   Typography
@@ -50,11 +52,16 @@ export default function LandingPage() {
   const [createPin, setCreatePin] = useState('');
   const [createNickname, setCreateNickname] = useState(settings.nickname);
   const [createMaxUsers, setCreateMaxUsers] = useState<string>('2');
+  const [createOfflineMessagesEnabled, setCreateOfflineMessagesEnabled] = useState(settings.offlineMessagesEnabled);
   const [editingRoomId, setEditingRoomId] = useState('');
   const [editingRoomName, setEditingRoomName] = useState('');
   const [loading, setLoading] = useState<'join' | 'create' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const pinnedRooms = useMemo(() => savedRooms.filter((room) => room.pinned), [savedRooms]);
+
+  useEffect(() => {
+    setCreateOfflineMessagesEnabled(settings.offlineMessagesEnabled);
+  }, [settings.offlineMessagesEnabled]);
 
   const copyRoomId = async (roomId: string) => {
     try {
@@ -89,7 +96,8 @@ export default function LandingPage() {
       saveRoom({
         roomId: result.roomId,
         nickname: result.nickname,
-        relay: result.relay
+        relay: result.relay,
+        offlineMessagesEnabled: result.offlineMessagesEnabled
       });
       navigate(`/room/${result.roomId}`);
     } catch (err) {
@@ -117,14 +125,16 @@ export default function LandingPage() {
         roomId: createRoomId.trim() || undefined,
         nickname: createNickname.trim(),
         pin: createPin.trim() || undefined,
-        maxUsers: Math.min(9999, Math.max(2, Number(createMaxUsers) || 2))
+        maxUsers: Math.min(9999, Math.max(2, Number(createMaxUsers) || 2)),
+        offlineMessagesEnabled: createOfflineMessagesEnabled
       });
 
       saveRoom({
         roomId: result.roomId,
         nickname: result.nickname,
         relay: result.relay,
-        label: createRoomName.trim() || undefined
+        label: createRoomName.trim() || undefined,
+        offlineMessagesEnabled: result.offlineMessagesEnabled
       });
       navigate(`/room/${result.roomId}`);
     } catch (err) {
@@ -223,6 +233,15 @@ export default function LandingPage() {
                   }
                 }}
                 inputProps={{ min: 2, max: 9999 }}
+              />
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={createOfflineMessagesEnabled}
+                    onChange={(event) => setCreateOfflineMessagesEnabled(event.target.checked)}
+                  />
+                }
+                label="Offline messages"
               />
 
               <Button
@@ -327,7 +346,15 @@ export default function LandingPage() {
                         <>
                           <ListItemText
                             primary={room.label || room.roomId}
-                            secondary={room.relayName ? `${room.roomId} - ${room.relayName}` : room.roomId}
+                            secondary={
+                              [
+                                room.roomId,
+                                room.relayName,
+                                room.offlineMessagesEnabled ? 'Offline messages' : ''
+                              ]
+                                .filter(Boolean)
+                                .join(' - ')
+                            }
                             primaryTypographyProps={{ noWrap: true, fontWeight: 700 }}
                             secondaryTypographyProps={{ noWrap: true }}
                             sx={{ minWidth: 0, m: 0 }}

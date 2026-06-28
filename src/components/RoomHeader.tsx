@@ -53,6 +53,7 @@ export default function RoomHeader({
         >
           <ConnectionStatusChip status={session.connectionStatus} />
           <Chip size="small" label={`${session.room?.memberCount ?? session.members.length} members`} />
+          {session.offlineMessagesEnabled ? <Chip size="small" label="Offline messages" color="primary" variant="outlined" /> : null}
         </Stack>
       </Box>
       <Stack direction="row" spacing={0.25} sx={{ flexShrink: 0 }}>

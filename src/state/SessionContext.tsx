@@ -5,6 +5,7 @@ import type {
   ConnectionStatus,
   EnterRoomResult,
   JoinRoomRequest,
+  MessageStatus,
   P2PStatus,
   RelayInfo,
   RoomSnapshot,
@@ -20,7 +21,9 @@ import { PeerConnectionManager, PeerSignalPayload } from '../services/p2p';
 import { useSettings } from './SettingsContext';
 
 const ACTIVE_SESSION_KEY = 'cyan-chat-active-session-v1';
+const SESSION_MESSAGES_PREFIX = 'cyan-chat-session-messages-v1';
 const HISTORY_PAGE_SIZE = 50;
+const MAX_SESSION_MESSAGES = 300;
 
 interface SessionContextValue {
   session: ChatSession | null;
@@ -50,6 +53,7 @@ type InternalState = {
 type CheckRelayResult = {
   roomId: string;
   relayChanged: boolean;
+  offlineMessagesEnabled?: boolean;
   oldRelayId?: string;
   relay: RelayInfo;
 };
@@ -62,6 +66,41 @@ function persistActiveSession(info: EnterRoomResult | null) {
   } else {
     removeSessionValue(ACTIVE_SESSION_KEY);
   }
+}
+
+function sessionMessagesKey(info: Pick<EnterRoomResult, 'roomId' | 'userId'>) {
+  return `${SESSION_MESSAGES_PREFIX}:${encodeURIComponent(info.roomId)}:${encodeURIComponent(info.userId)}`;
+}
+
+function getStoredSessionMessages(info: Pick<EnterRoomResult, 'roomId' | 'userId'>) {
+  return getSessionValue<ChatMessage[]>(sessionMessagesKey(info), []);
+}
+
+function persistSessionMessages(info: Pick<EnterRoomResult, 'roomId' | 'userId'>, nextMessages: ChatMessage[]) {
+  const chatMessages = nextMessages
+    .filter((message) => message.direction !== 'system')
+    .slice(-MAX_SESSION_MESSAGES);
+  setSessionValue(sessionMessagesKey(info), chatMessages);
+}
+
+function removePersistedSessionMessages(info: Pick<EnterRoomResult, 'roomId' | 'userId'>) {
+  removeSessionValue(sessionMessagesKey(info));
+}
+
+function relayStatusToMessageStatus(status?: string): MessageStatus | null {
+  if (status === 'read') return 'read';
+  if (status === 'delivered') return 'delivered';
+  if (status === 'sent' || status === 'pending') return 'sent';
+  return null;
+}
+
+function deliveryStatusToMessageStatus(deliveryStatus?: Record<string, string>): MessageStatus | null {
+  const statuses = Object.values(deliveryStatus || {});
+  if (!statuses.length) return null;
+  if (statuses.every((status) => status === 'read')) return 'read';
+  if (statuses.some((status) => status === 'delivered' || status === 'read')) return 'delivered';
+  if (statuses.some((status) => status === 'sent' || status === 'pending')) return 'sent';
+  return null;
 }
 
 export function SessionProvider({ children }: { children: React.ReactNode }) {
@@ -87,8 +126,22 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const leaveRequested = useRef(false);
   const historyLoadingRef = useRef(false);
   const restoringRef = useRef(false);
+  const persistentChatEnabledRef = useRef(settings.persistentChatEnabled);
   const reconnectTimerRef = useRef<number | null>(null);
   const lastSystemMessageRef = useRef<{ text: string; kind: 'info' | 'error'; ts: number } | null>(null);
+
+  useEffect(() => {
+    persistentChatEnabledRef.current = settings.persistentChatEnabled;
+    if (!settings.persistentChatEnabled && sessionInfoRef.current) {
+      removePersistedSessionMessages(sessionInfoRef.current);
+    }
+  }, [settings.persistentChatEnabled]);
+
+  useEffect(() => {
+    const info = sessionInfoRef.current;
+    if (!settings.persistentChatEnabled || !info) return;
+    persistSessionMessages(info, messages);
+  }, [messages, settings.persistentChatEnabled]);
 
   useEffect(() => {
     membersRef.current = members;
@@ -122,7 +175,8 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       connectionStatus: state.connectionStatus,
       p2pStatus: state.p2pStatus,
       error: state.error,
-      hasPin: state.roomInfo.hasPin
+      hasPin: state.roomInfo.hasPin,
+      offlineMessagesEnabled: state.roomInfo.offlineMessagesEnabled ?? state.room?.offlineMessagesEnabled
     };
   }, [state, members]);
 
@@ -308,14 +362,20 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
         if (checked?.relay) {
           const relay = checked.relay;
+          const offlineMessagesEnabled =
+            typeof checked.offlineMessagesEnabled === 'boolean'
+              ? checked.offlineMessagesEnabled
+              : info.offlineMessagesEnabled;
           if (relay.publicUrl !== info.relay.publicUrl) {
             info.relay = relay;
+            info.offlineMessagesEnabled = offlineMessagesEnabled;
             sessionInfoRef.current = info;
             persistActiveSession(info);
             socket.updateUrl(relay.publicUrl);
             addSystemMessage('Room moved to a new relay. Reconnecting…');
           } else {
             info.relay = relay;
+            info.offlineMessagesEnabled = offlineMessagesEnabled;
             sessionInfoRef.current = info;
             persistActiveSession(info);
           }
@@ -357,14 +417,18 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       peerRef.current = null;
 
       reconnectAttempts.current = 0;
-
-      if (previousRoomId && previousRoomId !== roomInfo.roomId) {
-        setMessages([]);
-        setHasMoreHistory(false);
-      }
+      const storedMessages = persistentChatEnabledRef.current ? getStoredSessionMessages(roomInfo) : [];
 
       sessionInfoRef.current = roomInfo;
       persistActiveSession(roomInfo);
+
+      if (previousRoomId && previousRoomId !== roomInfo.roomId) {
+        setMessages(storedMessages);
+        setHasMoreHistory(false);
+      } else if (storedMessages.length) {
+        setMessages((prev) => mergeMessages(prev, storedMessages));
+      }
+
       setSelectedRoomId(roomInfo.roomId);
       setState((prev) => ({
         ...prev,
@@ -402,9 +466,23 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
             reconnectAttempts.current = 0;
             markConnected();
             const joinedUsers = event.users || [];
+            const offlineMessagesEnabled =
+              event.room.offlineMessagesEnabled ?? event.offlineMessagesEnabled ?? roomInfo.offlineMessagesEnabled;
+            const joinedRoom = {
+              ...event.room,
+              memberCount: joinedUsers.length,
+              offlineMessagesEnabled
+            };
+            const joinedRoomInfo = {
+              ...roomInfo,
+              offlineMessagesEnabled
+            };
+            sessionInfoRef.current = joinedRoomInfo;
+            persistActiveSession(joinedRoomInfo);
             setState((prev) => ({
               ...prev,
-              room: { ...event.room, memberCount: joinedUsers.length },
+              roomInfo: joinedRoomInfo,
+              room: joinedRoom,
               error: null
             }));
             updateMembers(joinedUsers);
@@ -432,7 +510,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
               ];
             });
 
-            await setupP2P(roomInfo, joinedUsers, { ...event.room, memberCount: joinedUsers.length }, socket);
+            await setupP2P(joinedRoomInfo, joinedUsers, joinedRoom, socket);
             return;
           }
 
@@ -467,30 +545,60 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
           if (event.type === 'message') {
             markConnected();
+            const isOwnMessage = event.senderId === roomInfo.userId;
             const senderNickname =
-              membersRef.current.find((u) => u.userId === event.senderId)?.nickname || event.senderId;
+              isOwnMessage
+                ? roomInfo.nickname
+                : membersRef.current.find((u) => u.userId === event.senderId)?.nickname || event.senderId;
             const incoming: ChatMessage = {
               id: event.messageId || createId('msg'),
               roomId: event.roomId,
               senderId: event.senderId,
               senderNickname,
               text: event.text,
-              timestamp: Math.floor(Date.now() / 1000),
-              direction: 'incoming',
-              status: 'received',
+              timestamp: event.createdAt || Math.floor(Date.now() / 1000),
+              direction: isOwnMessage ? 'outgoing' : 'incoming',
+              status: isOwnMessage ? relayStatusToMessageStatus(event.status) || 'sent' : 'received',
               deliveryMode: peerRef.current ? 'p2p' : 'relay',
               colorKey: event.senderId
             };
             appendMessages([incoming]);
-            if (!peerRef.current) socket.sendAck(event.messageId);
+            if (!peerRef.current && !isOwnMessage) socket.sendAck(event.messageId, 'delivered');
             return;
           }
 
           if (event.type === 'message_accepted') {
             markConnected();
             if (event.ok) {
-              setMessages((prev) => prev.map((m) => (m.id === event.messageId ? { ...m, status: 'sent' } : m)));
+              const status = deliveryStatusToMessageStatus(event.deliveryStatus) || 'sent';
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === event.messageId
+                    ? {
+                        ...m,
+                        status,
+                        timestamp: event.createdAt || m.timestamp
+                      }
+                    : m
+                )
+              );
             }
+            return;
+          }
+
+          if (event.type === 'message_status') {
+            markConnected();
+            const status = relayStatusToMessageStatus(event.status);
+            if (status) {
+              setMessages((prev) =>
+                prev.map((m) => (m.id === event.messageId && m.direction === 'outgoing' ? { ...m, status } : m))
+              );
+            }
+            return;
+          }
+
+          if (event.type === 'ack_accepted') {
+            markConnected();
             return;
           }
 
@@ -580,6 +688,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       peerRef.current = null;
 
       if (!silent) {
+        sessionInfoRef.current = null;
         persistActiveSession(null);
         setMessages([]);
         updateMembers([]);
@@ -603,7 +712,8 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       const created = await createRoom(settings.registryUrl, {
         roomId,
         pin: request.pin?.trim() || undefined,
-        maxUsers: request.maxUsers || 2
+        maxUsers: request.maxUsers || 2,
+        offlineMessagesEnabled: !!request.offlineMessagesEnabled
       });
 
       const relay: RelayInfo = {
@@ -622,12 +732,13 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         hasPin: !!request.pin?.trim(),
         pin: request.pin?.trim() || undefined,
         maxUsers: request.maxUsers || 2,
+        offlineMessagesEnabled: created.offlineMessagesEnabled ?? !!request.offlineMessagesEnabled,
         mode: 'create'
       };
 
+      sessionInfoRef.current = result;
       setMessages([]);
       setHasMoreHistory(false);
-      sessionInfoRef.current = result;
       setState((prev) => ({
         ...prev,
         roomInfo: result,
@@ -658,12 +769,13 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         hasPin: !!details.room.hasPin,
         pin: request.pin?.trim() || undefined,
         maxUsers: details.room.maxUsers,
+        offlineMessagesEnabled: !!details.room.offlineMessagesEnabled,
         mode: 'join'
       };
 
+      sessionInfoRef.current = result;
       setMessages([]);
       setHasMoreHistory(false);
-      sessionInfoRef.current = result;
       setState((prev) => ({
         ...prev,
         roomInfo: result,
@@ -686,12 +798,16 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         const stored = getSessionValue<EnterRoomResult | null>(ACTIVE_SESSION_KEY, null);
         if (!stored || stored.roomId !== roomId) return false;
 
-        const relay = (await checkRelay(roomId))?.relay || (await resolveRelay(roomId));
+        const checked = await checkRelay(roomId);
+        const relay = checked?.relay || (await resolveRelay(roomId));
         const roomInfo: EnterRoomResult = relay ? { ...stored, relay } : stored;
+        if (typeof checked?.offlineMessagesEnabled === 'boolean') {
+          roomInfo.offlineMessagesEnabled = checked.offlineMessagesEnabled;
+        }
 
+        sessionInfoRef.current = roomInfo;
         setMessages([]);
         setHasMoreHistory(false);
-        sessionInfoRef.current = roomInfo;
         setState((prev) => ({
           ...prev,
           roomInfo,
@@ -722,6 +838,9 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     const relay = checked?.relay || (await resolveRelay(roomId));
 
     const updated: EnterRoomResult = relay ? { ...sessionInfoRef.current, relay } : sessionInfoRef.current;
+    if (typeof checked?.offlineMessagesEnabled === 'boolean') {
+      updated.offlineMessagesEnabled = checked.offlineMessagesEnabled;
+    }
     sessionInfoRef.current = updated;
     persistActiveSession(updated);
     connect(updated, state.room);

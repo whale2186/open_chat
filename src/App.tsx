@@ -169,7 +169,7 @@ export default function App() {
               <Typography variant="caption" color="text.secondary" noWrap>
                 {isRoomRoute
                   ? session
-                    ? `${savedRoom?.label && savedRoom.label !== roomId ? `${roomId} - ` : ''}${roomCount}/${roomMax} members`
+                    ? `${savedRoom?.label && savedRoom.label !== roomId ? `${roomId} - ` : ''}${roomCount}/${roomMax} members${session.offlineMessagesEnabled ? ' - offline messages' : ''}`
                     : ''
                   : ''}
               </Typography>

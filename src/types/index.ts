@@ -15,7 +15,7 @@ export type P2PStatus = 'disabled' | 'negotiating' | 'active' | 'unavailable';
 
 export type MessageDirection = 'incoming' | 'outgoing' | 'system';
 
-export type MessageStatus = 'sending' | 'sent' | 'delivered' | 'failed' | 'received';
+export type MessageStatus = 'sending' | 'sent' | 'delivered' | 'read' | 'failed' | 'received';
 
 export interface AppSettings {
   registryUrl: string;
@@ -26,6 +26,8 @@ export interface AppSettings {
   chatBackgroundImage: string;
   accentColor: string;
   savedAccentColors: string[];
+  offlineMessagesEnabled: boolean;
+  persistentChatEnabled: boolean;
 }
 
 export interface RelayInfo {
@@ -48,6 +50,7 @@ export interface RelayCreateResponse {
   relayId: string;
   publicUrl: string;
   maxUsers: number;
+  offlineMessagesEnabled?: boolean;
   createdAt: number;
 }
 
@@ -70,6 +73,7 @@ export interface RoomSnapshot {
   createdAt: number;
   updatedAt: number;
   lastActivityAt?: number;
+  offlineMessagesEnabled?: boolean;
   users: RoomUser[];
 }
 
@@ -79,6 +83,7 @@ export interface RoomDetails {
     relayId: string;
     hasPin: boolean;
     maxUsers: number;
+    offlineMessagesEnabled?: boolean;
     createdAt: number;
   };
   relay: RelayInfo;
@@ -90,6 +95,7 @@ export interface JoinRoomRequest {
   nickname: string;
   pin?: string;
   maxUsers?: number;
+  offlineMessagesEnabled?: boolean;
 }
 
 export interface EnterRoomResult {
@@ -99,6 +105,7 @@ export interface EnterRoomResult {
   nickname: string;
   hasPin?: boolean;
   maxUsers?: number;
+  offlineMessagesEnabled?: boolean;
   mode: 'create' | 'join';
   pin?: string;
 }
@@ -149,6 +156,7 @@ export interface ChatSession {
   p2pStatus: P2PStatus;
   error?: string | null;
   hasPin?: boolean;
+  offlineMessagesEnabled?: boolean;
 }
 
 export interface SavedRoom {
@@ -158,6 +166,7 @@ export interface SavedRoom {
   relayId?: string;
   relayName?: string;
   publicUrl?: string;
+  offlineMessagesEnabled?: boolean;
   pinned: boolean;
   lastOpenedAt: number;
   createdAt: number;

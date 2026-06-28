@@ -12,7 +12,14 @@ async function requestJSON<T>(url: string, init?: RequestInit): Promise<T> {
   });
   if (!res.ok) {
     const text = await res.text().catch(() => '');
-    throw new Error(text || `Request failed with ${res.status}`);
+    let parsedError = '';
+    try {
+      const parsed = JSON.parse(text) as { error?: string };
+      parsedError = parsed.error || '';
+    } catch {
+      // Fall through to the raw response text.
+    }
+    throw new Error(parsedError || text || `Request failed with ${res.status}`);
   }
   return (await res.json()) as T;
 }
@@ -62,7 +69,10 @@ export async function chooseRelay(registryUrl: string): Promise<RelayInfo> {
   }
 }
 
-export async function createRoom(registryUrl: string, payload: { roomId?: string; pin?: string; maxUsers?: number }): Promise<RelayCreateResponse> {
+export async function createRoom(
+  registryUrl: string,
+  payload: { roomId?: string; pin?: string; maxUsers?: number; offlineMessagesEnabled?: boolean }
+): Promise<RelayCreateResponse> {
   try {
     return await requestJSON<RelayCreateResponse>(`${normalizeHttpUrl(registryUrl)}/api/room/create`, {
       method: 'POST',
@@ -75,6 +85,7 @@ export async function createRoom(registryUrl: string, payload: { roomId?: string
       relayId: 'relay-demo',
       publicUrl: 'localhost:9000',
       maxUsers: payload.maxUsers || 2,
+      offlineMessagesEnabled: !!payload.offlineMessagesEnabled,
       createdAt: Math.floor(Date.now() / 1000)
     };
   }
@@ -91,6 +102,7 @@ export async function getRoomDetails(registryUrl: string, roomId: string): Promi
         relayId: 'relay-demo',
         hasPin: false,
         maxUsers: 2,
+        offlineMessagesEnabled: false,
         createdAt: Math.floor(Date.now() / 1000)
       },
       relay: demoRelay()

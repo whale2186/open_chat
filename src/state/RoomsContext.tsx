@@ -9,6 +9,7 @@ interface SaveRoomInput {
   nickname: string;
   relay?: RelayInfo;
   label?: string;
+  offlineMessagesEnabled?: boolean;
 }
 
 interface RoomsContextValue {
@@ -53,6 +54,7 @@ export function RoomsProvider({ children }: { children: React.ReactNode }) {
                     relayId: input.relay?.relayId ?? room.relayId,
                     relayName: input.relay?.relayName ?? room.relayName,
                     publicUrl: input.relay?.publicUrl ?? room.publicUrl,
+                    offlineMessagesEnabled: input.offlineMessagesEnabled ?? room.offlineMessagesEnabled,
                     lastOpenedAt: now
                   }
                 : room
@@ -67,6 +69,7 @@ export function RoomsProvider({ children }: { children: React.ReactNode }) {
           relayId: input.relay?.relayId,
           relayName: input.relay?.relayName,
           publicUrl: input.relay?.publicUrl,
+          offlineMessagesEnabled: input.offlineMessagesEnabled,
           pinned: false,
           createdAt: now,
           lastOpenedAt: now

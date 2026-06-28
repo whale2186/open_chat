@@ -6,8 +6,10 @@ import {
   DialogContent,
   Divider,
   Drawer,
+  FormControlLabel,
   IconButton,
   Stack,
+  Switch,
   TextField,
   Tooltip,
   Typography
@@ -164,6 +166,36 @@ export default function SettingsDrawer({ open, onClose, settings, onChange, mode
               value={nicknameDraft}
               onChange={(e) => setNicknameDraft(e.target.value)}
               onBlur={() => onChange({ nickname: nicknameDraft.trim() })}
+            />
+          </Box>
+
+          <Box>
+            <Typography variant="subtitle2" fontWeight={800} sx={{ mb: 1 }}>
+              Room defaults
+            </Typography>
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={settings.offlineMessagesEnabled}
+                  onChange={(event) => onChange({ offlineMessagesEnabled: event.target.checked })}
+                />
+              }
+              label="Offline messages"
+            />
+          </Box>
+
+          <Box>
+            <Typography variant="subtitle2" fontWeight={800} sx={{ mb: 1 }}>
+              Chat data
+            </Typography>
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={settings.persistentChatEnabled}
+                  onChange={(event) => onChange({ persistentChatEnabled: event.target.checked })}
+                />
+              }
+              label="Persistent chat"
             />
           </Box>
 

@@ -5,7 +5,14 @@ type SocketEvent =
   | { type: 'open' }
   | { type: 'close'; code: number; reason: string }
   | { type: 'error'; error: string }
-  | { type: 'room_joined'; roomId: string; userId: string; room: RoomSnapshot; users: RoomUser[] }
+  | {
+      type: 'room_joined';
+      roomId: string;
+      userId: string;
+      room: RoomSnapshot;
+      users: RoomUser[];
+      offlineMessagesEnabled?: boolean;
+    }
   | {
       type: 'user_joined';
       roomId: string;
@@ -15,8 +22,37 @@ type SocketEvent =
       peerInfo?: Record<string, unknown>;
     }
   | { type: 'user_left'; roomId: string; userId: string }
-  | { type: 'message'; roomId: string; messageId: string; senderId: string; text: string }
-  | { type: 'message_accepted'; messageId: string; ok: boolean }
+  | {
+      type: 'message';
+      roomId: string;
+      messageId: string;
+      senderId: string;
+      text: string;
+      createdAt?: number;
+      updatedAt?: number;
+      status?: string;
+      deliveryStatus?: Record<string, string>;
+    }
+  | {
+      type: 'message_accepted';
+      roomId?: string;
+      messageId: string;
+      senderId?: string;
+      ok: boolean;
+      createdAt?: number;
+      updatedAt?: number;
+      deliveryStatus?: Record<string, string>;
+    }
+  | {
+      type: 'message_status';
+      roomId: string;
+      messageId: string;
+      userId: string;
+      status: string;
+      updatedAt?: number;
+      deliveryStatus?: Record<string, string>;
+    }
+  | { type: 'ack_accepted'; roomId: string; messageId: string; status: string; updatedAt?: number; ok?: boolean }
   | { type: 'signal'; senderId: string; payload: Record<string, unknown> }
   | { type: 'pong' };
 
@@ -198,8 +234,8 @@ export class RelaySocket {
     this.send({ type: 'message', messageId, text, recipientId });
   }
 
-  sendAck(messageId: string) {
-    this.send({ type: 'ack', messageId });
+  sendAck(messageId: string, status: 'delivered' | 'read' = 'delivered') {
+    this.send({ type: 'ack', messageId, status });
   }
 
   sendSignal(targetUserId: string, payload: Record<string, unknown>) {

@@ -11,7 +11,9 @@ const DEFAULT_SETTINGS: AppSettings = {
   selectedRelayId: '',
   chatBackgroundImage: '',
   accentColor: '#26c6da',
-  savedAccentColors: []
+  savedAccentColors: [],
+  offlineMessagesEnabled: false,
+  persistentChatEnabled: true
 };
 
 const STORAGE_KEY = 'cyan-chat-settings-v1';
