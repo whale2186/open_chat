@@ -126,6 +126,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const leaveRequested = useRef(false);
   const historyLoadingRef = useRef(false);
   const restoringRef = useRef(false);
+  const persistMessagesPausedRef = useRef(false);
   const persistentChatEnabledRef = useRef(settings.persistentChatEnabled);
   const reconnectTimerRef = useRef<number | null>(null);
   const lastSystemMessageRef = useRef<{ text: string; kind: 'info' | 'error'; ts: number } | null>(null);
@@ -139,7 +140,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     const info = sessionInfoRef.current;
-    if (!settings.persistentChatEnabled || !info) return;
+    if (persistMessagesPausedRef.current || !settings.persistentChatEnabled || !info) return;
     persistSessionMessages(info, messages);
   }, [messages, settings.persistentChatEnabled]);
 
@@ -196,6 +197,14 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const appendMessages = useCallback((incoming: ChatMessage[]) => {
     if (!incoming.length) return;
     setMessages((prev) => mergeMessages(prev, incoming));
+  }, []);
+
+  const replaceMessagesWithoutPersisting = useCallback((nextMessages: ChatMessage[]) => {
+    persistMessagesPausedRef.current = true;
+    setMessages(nextMessages);
+    window.setTimeout(() => {
+      persistMessagesPausedRef.current = false;
+    }, 100);
   }, []);
 
   const fetchMessageHistory = useCallback(
@@ -423,7 +432,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       persistActiveSession(roomInfo);
 
       if (previousRoomId && previousRoomId !== roomInfo.roomId) {
-        setMessages(storedMessages);
+        replaceMessagesWithoutPersisting(storedMessages);
         setHasMoreHistory(false);
       } else if (storedMessages.length) {
         setMessages((prev) => mergeMessages(prev, storedMessages));
@@ -667,7 +676,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       socketRef.current = socket;
       socket.connect();
     },
-    [addSystemMessage, appendMessages, clearReconnectTimer, loadInitialHistory, markConnected, scheduleReconnect, setupP2P, updateMembers]
+    [addSystemMessage, appendMessages, clearReconnectTimer, loadInitialHistory, markConnected, replaceMessagesWithoutPersisting, scheduleReconnect, setupP2P, updateMembers]
   );
 
   const disconnect = useCallback(
@@ -737,7 +746,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       };
 
       sessionInfoRef.current = result;
-      setMessages([]);
+      replaceMessagesWithoutPersisting([]);
       setHasMoreHistory(false);
       setState((prev) => ({
         ...prev,
@@ -750,7 +759,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       connect(result);
       return result;
     },
-    [connect, settings.nickname, settings.registryUrl]
+    [connect, replaceMessagesWithoutPersisting, settings.nickname, settings.registryUrl]
   );
 
   const joinAndEnterRoom = useCallback(
@@ -774,7 +783,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       };
 
       sessionInfoRef.current = result;
-      setMessages([]);
+      replaceMessagesWithoutPersisting([]);
       setHasMoreHistory(false);
       setState((prev) => ({
         ...prev,
@@ -787,7 +796,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       connect(result);
       return result;
     },
-    [connect, settings.nickname, settings.registryUrl]
+    [connect, replaceMessagesWithoutPersisting, settings.nickname, settings.registryUrl]
   );
 
   const restoreSession = useCallback(
@@ -806,7 +815,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         }
 
         sessionInfoRef.current = roomInfo;
-        setMessages([]);
+        replaceMessagesWithoutPersisting([]);
         setHasMoreHistory(false);
         setState((prev) => ({
           ...prev,
@@ -824,7 +833,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         restoringRef.current = false;
       }
     },
-    [checkRelay, connect, resolveRelay]
+    [checkRelay, connect, replaceMessagesWithoutPersisting, resolveRelay]
   );
 
   const leaveRoom = useCallback(() => disconnect(false), [disconnect]);

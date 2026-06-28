@@ -16,7 +16,7 @@ import ErrorBanner from '../components/ErrorBanner';
 export default function ChatPage() {
   const navigate = useNavigate();
   const params = useParams();
-  const { session, messages, members, sendMessage, retryConnection, selectedRoomId, setSelectedRoomId } = useSession();
+  const { session, messages, members, sendMessage, retryConnection, restoreSession, selectedRoomId, setSelectedRoomId } = useSession();
   const { settings } = useSettings();
   const roomId = params.roomId || selectedRoomId || session?.roomId || '';
   const chatBackgroundImage = settings.chatBackgroundImage.startsWith('data:image/')
@@ -24,10 +24,14 @@ export default function ChatPage() {
     : '';
 
   useEffect(() => {
-    if (params.roomId && params.roomId !== selectedRoomId) {
+    if (!params.roomId) return;
+    if (params.roomId !== selectedRoomId) {
       setSelectedRoomId(params.roomId);
     }
-  }, [params.roomId, selectedRoomId, setSelectedRoomId]);
+    if (session?.roomId !== params.roomId) {
+      void restoreSession(params.roomId);
+    }
+  }, [params.roomId, restoreSession, selectedRoomId, session?.roomId, setSelectedRoomId]);
 
   const memberDrawer = (
     <MemberPanel
