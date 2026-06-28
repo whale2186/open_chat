@@ -112,10 +112,13 @@ export interface EnterRoomResult {
 
 export interface PersistedMessage {
   messageId: string;
+  roomId?: string;
   senderId: string;
-  nickname: string;
+  nickname?: string;
   text: string;
   createdAt: number;
+  updatedAt?: number;
+  deliveryStatus?: Record<string, string>;
 }
 
 export interface MessageHistoryResponse {

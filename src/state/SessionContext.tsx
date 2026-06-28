@@ -72,8 +72,14 @@ function sessionMessagesKey(info: Pick<EnterRoomResult, 'roomId' | 'userId'>) {
   return `${SESSION_MESSAGES_PREFIX}:${encodeURIComponent(info.roomId)}:${encodeURIComponent(info.userId)}`;
 }
 
+function roomMessagesKey(roomId: string) {
+  return `${SESSION_MESSAGES_PREFIX}:${encodeURIComponent(roomId)}`;
+}
+
 function getStoredSessionMessages(info: Pick<EnterRoomResult, 'roomId' | 'userId'>) {
-  return getSessionValue<ChatMessage[]>(sessionMessagesKey(info), []);
+  const userMessages = getSessionValue<ChatMessage[]>(sessionMessagesKey(info), []);
+  if (userMessages.length) return userMessages;
+  return getSessionValue<ChatMessage[]>(roomMessagesKey(info.roomId), []);
 }
 
 function persistSessionMessages(info: Pick<EnterRoomResult, 'roomId' | 'userId'>, nextMessages: ChatMessage[]) {
@@ -81,10 +87,12 @@ function persistSessionMessages(info: Pick<EnterRoomResult, 'roomId' | 'userId'>
     .filter((message) => message.direction !== 'system')
     .slice(-MAX_SESSION_MESSAGES);
   setSessionValue(sessionMessagesKey(info), chatMessages);
+  setSessionValue(roomMessagesKey(info.roomId), chatMessages);
 }
 
 function removePersistedSessionMessages(info: Pick<EnterRoomResult, 'roomId' | 'userId'>) {
   removeSessionValue(sessionMessagesKey(info));
+  removeSessionValue(roomMessagesKey(info.roomId));
 }
 
 function relayStatusToMessageStatus(status?: string): MessageStatus | null {
@@ -229,7 +237,8 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
           appendMessages(mapped);
         }
         setHasMoreHistory(response.hasMore);
-      } catch {
+      } catch (error) {
+        console.warn('Unable to load relay message history:', error);
         if (options.before == null) {
           setHasMoreHistory(false);
         }

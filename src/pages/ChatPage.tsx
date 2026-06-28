@@ -16,7 +16,7 @@ import ErrorBanner from '../components/ErrorBanner';
 export default function ChatPage() {
   const navigate = useNavigate();
   const params = useParams();
-  const { session, messages, members, sendMessage, retryConnection, restoreSession, selectedRoomId, setSelectedRoomId } = useSession();
+  const { session, messages, members, historyLoading, hasMoreHistory, sendMessage, retryConnection, restoreSession, loadOlderMessages, selectedRoomId, setSelectedRoomId } = useSession();
   const { settings } = useSettings();
   const roomId = params.roomId || selectedRoomId || session?.roomId || '';
   const chatBackgroundImage = settings.chatBackgroundImage.startsWith('data:image/')
@@ -106,7 +106,13 @@ export default function ChatPage() {
           {!messages.length ? (
             <LoadingState title="Preparing conversation" subtitle="Your messages will appear here." />
           ) : (
-            <MessageList messages={messages} currentUserId={session.userId} />
+            <MessageList
+              messages={messages}
+              currentUserId={session.userId}
+              hasMoreHistory={hasMoreHistory}
+              historyLoading={historyLoading}
+              onLoadOlder={loadOlderMessages}
+            />
           )}
 
           <Box

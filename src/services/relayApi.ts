@@ -31,7 +31,7 @@ export async function getRoomMessages(
   if (options.before != null) params.set('before', String(options.before));
   if (options.limit != null) params.set('limit', String(options.limit));
   const qs = params.toString();
-  const url = `${base}/api/room/${encodeURIComponent(roomId)}/messages${qs ? `?${qs}` : ''}`;
+  const url = `${base}/api/rooms/${encodeURIComponent(roomId)}/messages${qs ? `?${qs}` : ''}`;
   return requestJSON<MessageHistoryResponse>(url);
 }
 
@@ -41,7 +41,7 @@ export async function persistRoomMessage(
   message: PersistRoomMessageRequest
 ): Promise<{ ok: boolean }> {
   const base = normalizeHttpUrl(relayPublicUrl);
-  return requestJSON<{ ok: boolean }>(`${base}/api/room/${encodeURIComponent(roomId)}/messages`, {
+  return requestJSON<{ ok: boolean }>(`${base}/api/rooms/${encodeURIComponent(roomId)}/messages`, {
     method: 'POST',
     body: JSON.stringify(message)
   });

@@ -1,16 +1,25 @@
-import type { ChatMessage, PersistedMessage } from '../types';
+import type { ChatMessage, MessageStatus, PersistedMessage } from '../types';
+
+export function statusFromDeliveryStatus(deliveryStatus?: Record<string, string>): MessageStatus | null {
+  const statuses = Object.values(deliveryStatus || {});
+  if (!statuses.length) return null;
+  if (statuses.every((status) => status === 'read')) return 'read';
+  if (statuses.some((status) => status === 'delivered' || status === 'read')) return 'delivered';
+  if (statuses.some((status) => status === 'sent' || status === 'pending')) return 'sent';
+  return null;
+}
 
 export function mapPersistedMessage(msg: PersistedMessage, roomId: string, currentUserId: string): ChatMessage {
   const isOwn = msg.senderId === currentUserId;
   return {
     id: msg.messageId,
-    roomId,
+    roomId: msg.roomId || roomId,
     senderId: msg.senderId,
-    senderNickname: msg.nickname,
+    senderNickname: msg.nickname || msg.senderId,
     text: msg.text,
     timestamp: msg.createdAt,
     direction: isOwn ? 'outgoing' : 'incoming',
-    status: isOwn ? 'sent' : 'received',
+    status: isOwn ? statusFromDeliveryStatus(msg.deliveryStatus) || 'sent' : 'received',
     deliveryMode: 'relay',
     colorKey: msg.senderId
   };
